@@ -1,0 +1,216 @@
+1) 技术栈总览与职责边界
+
+核心原则
+
+• 采集层（OS 原生）可不同
+• 证据格式 / 防篡改 / 验证器必须统一（这决定可信度和三端一致性）
+
+分层
+
+1. Rust Core（共享）
+   • session 管理、events 写入、文件清单、哈希链、防篡改、签名（可选）
+
+2. Rust Verifier CLI（共享）
+   • 第三方独立验证 PASS/FAIL、定位断点、输出 JSON 报告
+
+3. Collector（平台原生）
+   • macOS：Swift（前台应用、录屏、输入元数据、网络域名可后置）
+   • Windows：C#/.NET 或 C++（对应采集）
+   • Linux：Rust/C（对应采集）
+
+4. UI 壳（Tauri 可选）
+   • 两按钮 Start/Stop、路径、状态显示、错误提示、导出报告
+
+⸻
+
+2) 仓库结构（情况 A 最推荐：单主线 + 目录分平台）
+
+建议从“三分支”迁移到 main 单分支（分支用于短期开发，而不是按 OS 永久分裂）：
+
+AEGISTRACE/
+  crates/
+    aegis-core/            # Rust: 证据包写入/哈希链/manifest
+    aegis-verifier/        # Rust: CLI 验证器
+    aegis-ipc/             # Rust: IPC消息定义（可选）
+  apps/
+    aegis-tauri/           # Tauri GUI（可选）
+  collectors/
+    macos/                 # Swift 工程（采集）
+    windows/               # Windows 采集
+    linux/                 # Linux 采集
+  spec/
+    evidence_bundle.md     # 证据包规范（对外说明）
+  scripts/
+    build_macos.sh
+    build_windows.ps1
+    build_linux.sh
+
+为什么这样最稳：
+• core/verifier 一份代码三端复用
+• OS 差异集中在 collectors 目录
+• CI 一次 tag 同时出三端产物
+
+⸻
+
+3) 证据包（Evidence Bundle）规范：你产品可信度的“法律文本”
+
+输出目录结构（固定）
+
+Evidence_YYYYMMDD_HHMMSS/
+  session.json
+  events.jsonl
+  manifest.json
+  files/
+    screen.mp4             # 可选：录屏
+    shots/                 # 可选：截图/缩略图
+
+events.jsonl 每行字段（建议最小集合）
+• seq: 递增序号（防删/插）
+• ts: UTC 时间戳（ISO8601）
+• type: 事件类型（例如 session_started, app_focus_changed）
+• payload: 事件数据（JSON object）
+• prev_hash: 上一条 hash
+• hash: 当前条 hash（哈希链）
+
+哈希计算建议：
+hash = SHA256( canonical_json(event_without_hash_fields) || prev_hash )
+
+canonical_json: 键排序、无空格、固定编码，保证跨平台一致。
+
+manifest.json（关键文件清单）
+
+记录：
+• events.jsonl 的整体 hash
+• files/ 目录下每个文件的 hash
+• final_hash（最后一条 event 的 hash）
+
+⸻
+
+4) IPC（采集层 -> Rust Core）的最稳方案
+
+优先推荐：127.0.0.1 本地 TCP + JSON 消息
+原因：跨语言、跨平台最省事，调试也最方便。
+
+消息示例：
+{ "type":"app_focus_changed", "payload":{ "bundle_id":"...", "name":"..." } }
+
+Rust Core 接收后统一落库（events.jsonl）。
+
+后续想加强安全再升级：mac/linux 用 unix domain socket, windows 用 named pipe。
+
+⸻
+
+5) 分步开发路线（每步做完就能验证）
+
+下面是你要的“一步一步做”的全栈节奏（推荐 10 步）：
+
+Step 1 — Rust core:  session + 文件夹落地
+
+交付：start/stop 创建 Evidence_* 目录 + session.json
+验证：Start -> 磁盘出现目录；Stop -> session.json 写入 end_ts
+
+Step 2 — Rust core:  events.jsonl 基础事件
+
+交付：session_started/session_stopped 写入 JSONL, seq 递增
+验证：events.jsonl 两行，seq=1,2
+
+Step 3 — verifier CLI:  结构验证 + seq 连续
+
+交付：verifier verify <bundle> 输出 PASS/FAIL
+验证：删一行 -> FAIL 且提示断点 seq
+
+Step 4 — core:  哈希链防篡改 MVP
+
+交付：每条 event 写 prev_hash/hash, manifest 写 final_hash
+验证：改一字符 -> FAIL 定位断点
+
+Step 5 — verifier:  JSON 输出（给 GUI/报告用）
+
+交付：--json 输出机器可读结果
+验证：PASS 输出 events_count/final_hash
+
+Step 6 — Tauri GUI:  你说的 UI（路径框 + 开始/结束）
+
+交付：UI 调 Rust core start/stop
+验证：UI 点 Start/Stop 能生成 bundle
+
+Step 7 — macOS Swift collector MVP:  前台应用切换
+
+交付：采集 frontmost app -> IPC -> 写事件
+验证：切换应用，events.jsonl 出 app_focus_changed
+
+Step 8 — macOS 录屏 MVP:  先跑通录屏文件
+
+交付：files/screen.mp4 生成 + manifest 记录 hash
+验证：视频可播放；verifier PASS
+
+Step 9 — HEVC(H.265) 压缩（先 Stop 后转码，再升级录制时直写）
+
+交付：输出 HEVC mp4/mov
+验证：文件编码确认 + verifier PASS
+
+Step 10 — Windows/Linux 补齐同类 MVP
+
+交付：至少能产生同格式 bundle + PASS
+验证：三端都能用同一个 verifier 验证
+
+⸻
+
+6) macOS 采集模块建议（Swift）
+
+按“先易后难”顺序做，避免一上来卡权限/系统扩展：
+
+1. 前台应用 / 窗口焦点（相对容易）
+2. 录屏（需要 Screen Recording 权限）
+3. 输入 “元数据统计”（尽量不存明文，只有统计；需要 Input Monitoring/Accessibility）
+4. 网络域名（建议后置，系统级方案复杂）
+
+你想证明“没用 AI”，通常只需：录屏 + 应用切换 + 访问域名（可选）+ 防篡改与验证器。不要一开始就做最难的网络扩展。
+
+⸻
+
+7) 打包与发布（随时产出三平台）
+
+本地打包（原则）
+• macOS 包必须在 macOS 上打
+• Windows 包必须在 Windows 上打
+• Linux 包最好在 Linux 上打
+
+CI（GitHub Actions）
+
+在 GitHub 上用矩阵构建：
+• macos-latest: build core/verifier + collector + GUI
+• windows-latest: 同上
+• ubuntu-latest: 同上
+
+tag 发布自动上传产物（dmg/exe/appimage 等）
+
+⸻
+
+8) 安全与隐私边界（写进 spec 与 README）
+
+强烈建议明确写清楚（对学校/第三方很关键）：
+• 记录“行为轨迹”：时间线、应用切换、录屏（兜底）、输入统计
+• 不记录或可选记录：键入明文、页面内容、私密数据
+• 所有敏感权限均由系统弹窗授权
+• 证据包可由 verifier 独立验证（第三方复现）
+
+⸻
+
+9) 你现在“立刻开工”的最小落地点
+
+如果你今天就想动手而且保证不翻车，按这个顺序：
+
+1. 先写 Rust core + verifier（Step 1-4）
+2. 再写 Tauri UI（Step 6）
+3. 再接 macOS Swift 前台应用（Step 7）
+4. 再上录屏（Step 8）
+
+这条线每一步都能验证，不会被系统权限一开始就卡死。
+
+如果你愿意，我可以把这份指导继续“落到可直接开工的骨架”——给你：
+• aegis-core 的模块划分与函数签名（start/append/stop）
+• events.jsonl / manifest.json / session.json 的最终字段表（不会返工）
+• verifier CLI 的命令设计与返回码规范
+
+你只要回我一句：你想先做 GUI (Tauri) 还是先把 Rust core/verifier 完成？

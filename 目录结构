@@ -1,0 +1,17 @@
+AEGISTRACE/
+  crates/
+    aegis-core/            # Rust：schema、events、hash chain、bundle writer
+    aegis-verifier/        # Rust：CLI verifier
+    aegis-proto/           # Rust：IPC/消息定义（可选）
+  apps/
+    aegis-tauri/           # Tauri GUI（可选，先做也行）
+  collectors/
+    macos/                 # Swift：录屏/前台应用/输入/网络(后续)
+    windows/               # C# 或 C++：同类采集
+    linux/                 # Rust/C：同类采集
+  spec/
+    evidence_bundle.md     # 证据包规范（对外解释用）
+  scripts/
+    build_macos.sh
+    build_windows.ps1
+    build_linux.sh

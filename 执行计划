@@ -1,0 +1,120 @@
+Step 1 — 定证据包格式（只写规范，不写采集）
+
+做什么
+	•	定义 events.jsonl 行结构：ts, seq, type, payload
+	•	定义 bundle/ 结构：session.json、events.jsonl、manifest.json、files/
+
+验证
+	•	你能用手写样例生成一个最小 bundle，结构固定不变
+
+⸻
+
+Step 2 — Rust aegis-core：写 session + events.jsonl（先不防篡改）
+
+做什么
+	•	start_session(path) 创建 Evidence_YYYYMMDD_HHMMSS/
+	•	append_event(type, payload) 写 JSONL + seq++
+	•	stop_session() 写 session end
+
+验证
+	•	本地运行一个小 demo：Start→写2条事件→Stop
+	•	磁盘上生成 folder，events.jsonl 可读、seq 连续
+
+⸻
+
+Step 3 — Rust aegis-verifier：能验证“结构正确 + seq 连续”
+
+做什么
+	•	verifier 读取 bundle
+	•	校验 JSON 格式、必需文件存在、seq 连续
+
+验证
+	•	原始 bundle：PASS
+	•	手动删一行 events：FAIL（指出 seq 断点）
+
+⸻
+
+Step 4 — core 加“哈希链防篡改 MVP”
+
+做什么
+	•	每条事件增加 prev_hash 与 hash
+	•	session 结束写 final_hash
+	•	manifest 里记录关键文件哈希
+
+验证
+	•	原始：PASS
+	•	改 events.jsonl 任一字符：FAIL（定位到哪条开始断链）
+
+⸻
+
+Step 5 — CLI 可用性：输出一份“机器可读 JSON 结果”
+
+做什么
+	•	verifier verify bundle --json 输出 JSON（适合以后 GUI/报告调用）
+
+验证
+	•	PASS 输出含：events_count、final_hash、first_fail_seq（若失败）
+
+⸻
+
+Step 6 — GUI Step 1（Tauri 最小壳）：两个按钮 + 路径框 + 状态
+
+做什么
+	•	UI：保存路径（默认 Downloads）、Start、Stop、状态栏
+	•	点击 Start/Stop 调用 Rust core（通过 Tauri command）
+
+验证
+	•	你点 Start：生成 bundle + events 写入
+	•	点 Stop：session 结束
+	•	UI 状态切换正确
+
+这一步你就实现了你说的“第一步 UI + 第二步记录功能”，而且核心在 Rust，不会被平台绑死。
+
+⸻
+
+Step 7 — macOS collector MVP（先做“最容易过关”的：前台应用切换）
+
+做什么
+	•	Swift 采集 frontmost app（bundle id/name）
+	•	通过 IPC 发给 Rust core 记事件（type=app_focus_changed）
+
+验证
+	•	你切 Safari/Notes/Cursor
+	•	events.jsonl 出现 app 变化事件
+
+⸻
+
+Step 8 — macOS 录屏 MVP（兜底证据）
+
+做什么
+	•	Swift 录屏生成 files/screen.mp4（先不追求 HEVC，先跑通）
+	•	结束后把文件写入 manifest（由 Rust core 记录文件 hash）
+
+验证
+	•	第一次弹 Screen Recording 权限
+	•	Stop 后视频可播放
+	•	verifier PASS（包含文件存在与哈希一致）
+
+⸻
+
+Step 9 — HEVC（H.265）编码（你前面问过）
+
+做什么
+	•	优先实现“停止后转码成 HEVC”（更好分步验证）
+	•	成功后再升级为“录制时直接写 HEVC”（可选）
+
+验证
+	•	输出文件确认为 HEVC（你用系统播放器/ffprobe 均可）
+	•	verifier 仍 PASS
+
+⸻
+
+Step 10 — Windows/Linux collector 走同一接口（逐步补齐能力）
+
+做什么
+	•	Windows 先做：前台窗口/进程 + 基础事件
+	•	Linux 先做：活跃窗口/进程 + 基础事件
+	•	保持事件格式完全一致
+
+验证
+	•	三端生成的 bundle 都能用同一个 verifier 验证 PASS
