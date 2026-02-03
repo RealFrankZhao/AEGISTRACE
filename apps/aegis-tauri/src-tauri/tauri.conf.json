@@ -1,0 +1,24 @@
+{
+  "productName": "AEGISTRACE",
+  "version": "0.1.0",
+  "identifier": "com.aegistrace.app",
+  "build": {
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "",
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "AEGISTRACE",
+        "width": 800,
+        "height": 520,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  }
+}

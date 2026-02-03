@@ -19,16 +19,20 @@ jobs:
           swift build -c release
       - name: Package
         run: |
-          mkdir -p dist
-          cp target/release/aegis-core-server dist/
-          cp target/release/aegis-collector-cli dist/
-          cp target/release/aegis-verifier dist/
-          cp collectors/macos/native_recorder/.build/release/aegis-native-recorder dist/
-          tar -czf aegistrace-macos.tar.gz -C dist .
+          mkdir -p dist/macos
+          cp target/release/aegis-core-server dist/macos/
+          cp target/release/aegis-collector-cli dist/macos/
+          cp target/release/aegis-verifier dist/macos/
+          cp collectors/macos/native_recorder/.build/release/aegis-native-recorder dist/macos/
+          bash scripts/macos_app_bundle.sh
+          tar -czf aegistrace-macos.tar.gz -C dist/macos .
+          tar -czf aegistrace-macos-app.tar.gz -C dist/macos AEGISTRACE.app
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: aegistrace-macos.tar.gz
+          files: |
+            aegistrace-macos.tar.gz
+            aegistrace-macos-app.tar.gz
 
   build-linux:
     runs-on: ubuntu-latest

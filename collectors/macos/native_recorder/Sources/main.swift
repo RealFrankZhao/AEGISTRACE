@@ -5,13 +5,24 @@ final class Recorder: NSObject, AVCaptureFileOutputRecordingDelegate {
     private let session = AVCaptureSession()
     private let output = AVCaptureMovieFileOutput()
     private let done = DispatchSemaphore(value: 0)
+    private var signalSources: [DispatchSourceSignal] = []
 
     func record(outputURL: URL, duration: TimeInterval) throws {
         session.sessionPreset = .high
 
-        let screenInput = AVCaptureScreenInput(displayID: CGMainDisplayID())
+        guard let screenInput = AVCaptureScreenInput(displayID: CGMainDisplayID()) else {
+            throw NSError(domain: "aegis", code: 0, userInfo: [NSLocalizedDescriptionKey: "Cannot create screen input"])
+        }
         screenInput.capturesMouseClicks = true
         screenInput.capturesCursor = true
+        let displayBounds = CGDisplayBounds(CGMainDisplayID())
+        let targetSize = CGSize(width: 1280, height: 720)
+        let scale = min(targetSize.width / displayBounds.width, targetSize.height / displayBounds.height)
+        if scale < 1 {
+            screenInput.scaleFactor = scale
+        }
+        let fps = 30
+        screenInput.minFrameDuration = CMTimeMake(value: 1, timescale: Int32(fps))
 
         if session.canAddInput(screenInput) {
             session.addInput(screenInput)
@@ -21,12 +32,30 @@ final class Recorder: NSObject, AVCaptureFileOutputRecordingDelegate {
 
         if session.canAddOutput(output) {
             session.addOutput(output)
+            if let connection = output.connection(with: .video) {
+                output.setOutputSettings(
+                    [
+                        AVVideoCodecKey: AVVideoCodecType.hevc,
+                        AVVideoCompressionPropertiesKey: [
+                            AVVideoAverageBitRateKey: 2_000_000,
+                            AVVideoMaxKeyFrameIntervalKey: fps * 2
+                        ]
+                    ],
+                    for: connection
+                )
+            }
         } else {
             throw NSError(domain: "aegis", code: 2, userInfo: [NSLocalizedDescriptionKey: "Cannot add movie output"])
         }
 
+        setupSignalHandlers()
         session.startRunning()
         output.startRecording(to: outputURL, recordingDelegate: self)
+
+        DispatchQueue.global().async { [weak self] in
+            _ = FileHandle.standardInput.readDataToEndOfFile()
+            self?.output.stopRecording()
+        }
 
         DispatchQueue.global().asyncAfter(deadline: .now() + duration) { [weak self] in
             self?.output.stopRecording()
@@ -44,6 +73,19 @@ final class Recorder: NSObject, AVCaptureFileOutputRecordingDelegate {
             fputs("Recording failed: \(error)\n", stderr)
         }
         done.signal()
+    }
+
+    private func setupSignalHandlers() {
+        let signals: [Int32] = [SIGINT, SIGTERM]
+        for sig in signals {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: DispatchQueue.global())
+            source.setEventHandler { [weak self] in
+                self?.output.stopRecording()
+            }
+            source.resume()
+            signalSources.append(source)
+        }
     }
 }
 

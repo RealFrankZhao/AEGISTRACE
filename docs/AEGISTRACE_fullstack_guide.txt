@@ -1,0 +1,204 @@
+AEGISTRACE 全栈技术指导（当前实现版）
+================================================
+
+目标
+----
+- 共享 Rust Core/Verifier，三端输出同一证据包格式
+- Collector 允许平台原生实现，但事件与文件结构必须一致
+- GUI 只负责 Start/Stop 与状态展示，不承载采集逻辑
+
+
+0) 总体架构与边界
+----------------
+四层架构（已落地）：
+1) Rust Core（共享）
+   - 证据包写入、事件序列化、manifest、哈希链
+2) Rust Verifier（共享 CLI）
+   - 结构/seq/hash/文件存在性校验
+3) Collectors（平台原生/CLI）
+   - macOS Swift 录屏、CLI 事件发送
+4) GUI 壳（Tauri v2）
+   - Start/Stop、路径、状态、日志
+
+合规/隐私原则
+- 仅本机自证用途
+- 录屏需系统授权弹窗确认
+- 输入仅记录统计，不存明文
+- 网络域名级记录为后置步骤
+
+
+1) 当前仓库结构（真实目录）
+------------------------
+
+AEGISTRACE/
+  apps/
+    aegis-tauri/               # Tauri v2 GUI
+      ui/                      # 静态前端（index.html）
+      src-tauri/               # 后端（Rust）
+  crates/
+    aegis-core/                # Core writer（hash chain + manifest）
+    aegis-core-server/         # TCP server（Collector IPC）
+    aegis-collector-cli/       # CLI 事件发送器
+    aegis-verifier/            # 验证器
+  collectors/
+    macos/
+      native_recorder/         # Swift 原生录屏
+      run_demo.sh              # Demo 脚本
+    windows/
+    linux/
+  spec/
+    evidence_bundle.md         # 证据包规范（Phase0-2）
+  scripts/
+    build_macos.sh             # macOS 构建
+    build_linux.sh             # Linux 构建
+    build_windows.ps1          # Windows 构建
+    macos_app_bundle.sh        # 生成命令行 .app
+  docs/
+    PROJECT_OVERVIEW.md        # 当前成果与原理图
+
+
+2) 证据包（Evidence Bundle）规范
+----------------------------
+目录结构（固定）
+Evidence_YYYYMMDD_HHMMSS/
+  session.json
+  events.jsonl
+  manifest.json
+  files/
+    screen_*.mov               # 录屏分段
+    shots/000001.jpg           # 截图
+
+events.jsonl（每行一个事件）
+- 基础字段
+  - seq: 递增序号（从 1 开始）
+  - ts: UTC ISO8601
+  - type: 事件类型
+  - payload: JSON
+- 防篡改字段
+  - prev_hash
+  - hash
+
+统一事件类型
+- session_started { save_dir, platform, app_version }
+- session_stopped { reason }
+- app_focus_changed { app_id, app_name, window_title? }
+- file_added { rel_path, kind }
+- shot_saved { rel_path }
+- input_stats { interval_ms, key_count, backspace_count, paste_count }
+
+manifest.json
+- schema_version: 1
+- events_hash: events.jsonl 的 SHA-256
+- final_hash: 最后一条事件 hash
+- files: 每个文件 { rel_path, hash }
+
+
+3) IPC 协议（Collectors → Core Server）
+--------------------------------------
+- 传输：TCP 127.0.0.1:7878
+- 格式：JSON 每行一条
+- 示例：
+  {"type":"app_focus_changed","payload":{"app_id":"...","app_name":"..."}}
+
+Core Server 负责：
+- 将事件写入 Core
+- 复制文件到 bundle（file_added/shot_saved）
+
+
+4) Core Writer（aegis-core）实现要点
+-----------------------------------
+- append_event 会进行 canonical JSON 序列化并计算 hash
+- hash = SHA256({seq, ts, type, payload, prev_hash})
+- stop_session 写入 session.json/manifest.json
+- manifest.files 由 bundle 内所有文件计算 hash
+
+
+5) Verifier（aegis-verifier）实现要点
+-------------------------------------
+- 必须存在 session.json / events.jsonl / manifest.json
+- 校验 seq 连续
+- 校验 prev_hash/hash 链
+- 校验 events_hash 与实际文件一致
+- 校验 final_hash 与最后一条事件一致
+- 校验 manifest.files 中所有文件存在
+
+
+6) macOS 原生录屏（Swift/AVFoundation）
+--------------------------------------
+文件：collectors/macos/native_recorder/Sources/main.swift
+
+当前参数：
+- 编码：HEVC (H.265)
+- 分辨率：按显示器缩放到 1280x720（保持比例）
+- 帧率：30fps
+- 码率：约 2 Mbps
+- 输出格式：.mov
+
+停止机制：
+- stdin 关闭触发 stopRecording
+- SIGINT/SIGTERM 触发 stopRecording
+
+
+7) GUI (Tauri v2) 录屏与分段逻辑
+---------------------------------
+文件：apps/aegis-tauri/src-tauri/src/main.rs
+
+Start 时：
+- 启动 core-server
+- 启动录屏循环线程
+
+Stop 时：
+- 停止录屏线程（优雅关闭）
+- 等待最后一段写完
+- 发送 session_stopped
+- 退出 core-server
+
+分段规则：
+- 每 10 分钟一段（600 秒）
+- 文件名：files/screen_<段号>_<timestamp>.mov
+- 每段生成后发送 file_added 事件
+
+
+8) CLI 调试工具
+--------------
+- focus:
+  aegis-collector-cli focus <app_id> <app_name> [window_title]
+- file:
+  aegis-collector-cli file <source_path> <rel_path> <kind>
+- shot:
+  aegis-collector-cli shot <source_path> <rel_path>
+- input:
+  aegis-collector-cli input <interval_ms> <key_count> <backspace_count> <paste_count>
+- stop:
+  aegis-collector-cli stop [reason]
+
+
+9) 运行与验证（macOS）
+----------------------
+1) GUI 启动：
+   cd apps/aegis-tauri
+   cargo tauri dev
+
+2) Start/Stop 后验证：
+   cargo run -p aegis-verifier -- verify /Users/<user>/Downloads/Evidence_YYYYMMDD_HHMMSS
+
+
+10) Windows / Linux 后续实现建议
+-------------------------------
+- 复用：aegis-core / aegis-core-server / aegis-verifier
+- 替换采集器：
+  - Windows: .NET/C++ + Desktop Duplication API
+  - Linux: PipeWire/FFmpeg + X11/Wayland 事件
+- 保持：
+  - 事件类型完全一致
+  - file_added/shot_saved 的 rel_path 结构一致
+  - 录屏分段 10 分钟规则一致
+
+
+11) 当前实现验收清单
+------------------
+- GUI Start/Stop 可循环
+- 证据包结构完整
+- verifier PASS
+- 录屏分段输出到 files/screen_<段号>_<timestamp>.mov
+- hash chain + manifest 校验通过

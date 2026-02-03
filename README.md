@@ -18,6 +18,8 @@ AEGISTRACE/
     aegis-core-server/     # Rust: TCP core server (collector IPC)
     aegis-collector-cli/   # Rust: minimal collector CLI
     aegis-verifier/        # Rust: CLI verifier
+  apps/
+    aegis-tauri/           # Tauri GUI shell
   collectors/
     macos/                 # Swift: screen/app/input/network (later)
     windows/               # C# or C++ collectors
@@ -61,3 +63,18 @@ See `AEGISTRACE 全栈技术指导` for architecture, IPC strategy, and rollout 
 ## Releases (Phase 5)
 
 GitHub Actions builds artifacts on tag pushes (`v*`) for macOS/Linux/Windows.
+
+## macOS App Bundle
+
+To create a single `.app` bundle locally:
+
+```
+./scripts/macos_app_bundle.sh
+```
+
+The bundle will be at `dist/macos/AEGISTRACE.app`.
+
+## GUI Shell (Tauri)
+
+The Tauri UI lives in `apps/aegis-tauri`.
+Run it from that directory with `cargo tauri dev`.

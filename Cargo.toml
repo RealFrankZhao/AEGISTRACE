@@ -4,5 +4,6 @@ members = [
   "crates/aegis-collector-cli",
   "crates/aegis-core-server",
   "crates/aegis-verifier",
+  "apps/aegis-tauri/src-tauri",
 ]
 resolver = "2"

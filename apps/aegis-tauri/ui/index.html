@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AEGISTRACE</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 24px;
+        color: #1f2933;
+      }
+      h1 {
+        margin: 0 0 12px 0;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        color: #52606d;
+        margin-bottom: 6px;
+      }
+      input {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid #cbd2d9;
+        border-radius: 6px;
+      }
+      button {
+        padding: 10px 16px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .primary {
+        background: #2563eb;
+        color: white;
+      }
+      .secondary {
+        background: #e4e7eb;
+        color: #1f2933;
+      }
+      .status {
+        margin-top: 16px;
+        padding: 12px;
+        background: #f5f7fa;
+        border-radius: 8px;
+        font-size: 14px;
+      }
+      .hint {
+        font-size: 12px;
+        color: #52606d;
+        margin-top: 6px;
+      }
+      .log {
+        margin-top: 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>AEGISTRACE</h1>
+    <div class="row">
+      <div style="flex: 1;">
+        <label>Platform</label>
+        <input id="platform" value="macos" />
+      </div>
+      <div style="flex: 1;">
+        <label>App Version</label>
+        <input id="appVersion" value="0.1.0" />
+      </div>
+    </div>
+    <div class="row">
+      <div style="flex: 1;">
+        <label>Save Dir (optional)</label>
+        <input id="saveDir" placeholder="/Users/me/Downloads" />
+      </div>
+      <div style="flex: 1;">
+        <label>Addr (optional)</label>
+        <input id="addr" placeholder="127.0.0.1:7878" />
+      </div>
+    </div>
+    <div class="row">
+      <button class="primary" id="toggleBtn">Start Session</button>
+      <button class="secondary" id="refreshBtn">Refresh Status</button>
+    </div>
+
+    <div class="status" id="statusBox">
+      Status: <span id="statusText">idle</span>
+      <div class="hint">Session dir: <span id="sessionDir">-</span></div>
+      <div class="hint">Server addr: <span id="serverAddr">-</span></div>
+    </div>
+
+    <div class="log" id="log"></div>
+
+    <script>
+      const invoke = (command, payload) => {
+        if (window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke) {
+          return window.__TAURI__.core.invoke(command, payload);
+        }
+        if (window.__TAURI__ && window.__TAURI__.tauri && window.__TAURI__.tauri.invoke) {
+          return window.__TAURI__.tauri.invoke(command, payload);
+        }
+        return Promise.reject("Tauri API not available.");
+      };
+
+      const log = (message) => {
+        const node = document.getElementById("log");
+        node.textContent = message + "\n" + node.textContent;
+      };
+
+      const refreshStatus = async () => {
+        const status = await invoke("get_status");
+        document.getElementById("statusText").textContent = status.running
+          ? "running"
+          : "idle";
+        document.getElementById("sessionDir").textContent =
+          status.session_dir || "-";
+        document.getElementById("serverAddr").textContent = status.addr || "-";
+        const toggleBtn = document.getElementById("toggleBtn");
+        toggleBtn.textContent = status.running ? "Stop Session" : "Start Session";
+      };
+
+      document.getElementById("toggleBtn").addEventListener("click", async () => {
+        const status = await invoke("get_status");
+        if (!status.running) {
+          const platform = document.getElementById("platform").value.trim();
+          const appVersion = document.getElementById("appVersion").value.trim();
+          const saveDir = document.getElementById("saveDir").value.trim();
+          const addr = document.getElementById("addr").value.trim();
+          try {
+            const next = await invoke("start_session", {
+              platform,
+              appVersion,
+              saveDir: saveDir.length ? saveDir : null,
+              addr: addr.length ? addr : null,
+            });
+            log("Session started.");
+            document.getElementById("statusText").textContent = next.running
+              ? "running"
+              : "idle";
+            document.getElementById("sessionDir").textContent =
+              next.session_dir || "-";
+            document.getElementById("serverAddr").textContent = next.addr || "-";
+            setTimeout(refreshStatus, 500);
+            setTimeout(refreshStatus, 2000);
+          } catch (err) {
+            log("Start failed: " + err);
+          }
+          return;
+        }
+
+        try {
+          await invoke("stop_session", { reason: "user" });
+          log("Session stopped.");
+          await refreshStatus();
+        } catch (err) {
+          log("Stop failed: " + err);
+        }
+      });
+
+      document.getElementById("refreshBtn").addEventListener("click", refreshStatus);
+
+      refreshStatus();
+      setInterval(refreshStatus, 1000);
+    </script>
+  </body>
+</html>
