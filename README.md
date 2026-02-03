@@ -15,10 +15,9 @@ bundle format, tamper detection, and independent verification.
 AEGISTRACE/
   crates/
     aegis-core/            # Rust: schema, events, hash chain, bundle writer
+    aegis-core-server/     # Rust: TCP core server (collector IPC)
+    aegis-collector-cli/   # Rust: minimal collector CLI
     aegis-verifier/        # Rust: CLI verifier
-    aegis-proto/           # Rust: IPC/message definitions (optional)
-  apps/
-    aegis-tauri/           # Tauri GUI (optional)
   collectors/
     macos/                 # Swift: screen/app/input/network (later)
     windows/               # C# or C++ collectors
@@ -58,3 +57,7 @@ See `执行计划` for the step-by-step roadmap and validation checks.
 ## Technical Guide
 
 See `AEGISTRACE 全栈技术指导` for architecture, IPC strategy, and rollout flow.
+
+## Releases (Phase 5)
+
+GitHub Actions builds artifacts on tag pushes (`v*`) for macOS/Linux/Windows.
